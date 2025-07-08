@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -106,10 +107,80 @@ class MixpanelAnalytics {
   /// See this for more information: https://developer.mixpanel.com/docs/privacy-security#storing-your-data-in-the-european-union
   final String baseApiUrl;
 
+  /// Cached platform information to avoid repeated device info calls
+  Map<String, String>? _platformInfo;
+
   /// Used in case we want to remove the timer to send batched events.
   void dispose() {
     _batchTimer?.cancel();
     _batchTimer = null;
+  }
+
+  /// Initializes platform information once and caches it for efficient access
+  Future<void> _initializePlatformInfo() async {
+    if (_platformInfo != null) {
+      return;
+    }
+    
+    try {
+      final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+      
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+        _platformInfo = {
+          '\$os': 'Android',
+          '\$os_version': androidInfo.version.release,
+          '\$model': androidInfo.model,
+          '\$manufacturer': androidInfo.manufacturer,
+        };
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+        _platformInfo = {
+          '\$os': 'iOS',
+          '\$os_version': iosInfo.systemVersion,
+          '\$model': iosInfo.model,
+          '\$manufacturer': 'Apple',
+        };
+      } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+        final MacOsDeviceInfo macInfo = await deviceInfo.macOsInfo;
+        _platformInfo = {
+          '\$os': 'macOS',
+          '\$os_version': macInfo.osRelease,
+          '\$model': macInfo.model,
+          '\$manufacturer': 'Apple',
+        };
+      } else if (defaultTargetPlatform == TargetPlatform.windows) {
+        final WindowsDeviceInfo windowsInfo = await deviceInfo.windowsInfo;
+        _platformInfo = {
+          '\$os': 'Windows',
+          '\$os_version': windowsInfo.displayVersion,
+          '\$model': windowsInfo.computerName,
+          '\$manufacturer': 'Microsoft',
+        };
+      } else if (defaultTargetPlatform == TargetPlatform.linux) {
+        final LinuxDeviceInfo linuxInfo = await deviceInfo.linuxInfo;
+        _platformInfo = {
+          '\$os': 'Linux',
+          '\$os_version': linuxInfo.version ?? 'Unknown',
+          '\$model': linuxInfo.prettyName,
+          '\$manufacturer': 'Linux',
+        };
+      } else {
+        _platformInfo = {
+          '\$os': 'Unknown',
+          '\$os_version': 'Unknown',
+          '\$model': 'Unknown',
+          '\$manufacturer': 'Unknown',
+        };
+      }
+    } catch (e) {
+      _platformInfo = {
+        '\$os': 'Unknown',
+        '\$os_version': 'Unknown',
+        '\$model': 'Unknown',
+        '\$manufacturer': 'Unknown',
+      };
+    }
   }
 
   /// Provides an instance of this class.
@@ -210,6 +281,8 @@ class MixpanelAnalytics {
     String? ip,
     String? insertId,
   }) async {
+    await _initializePlatformInfo();
+    
     final trackEvent = _createTrackEvent(
         event, properties, time ?? DateTime.now(), ip, insertId);
 
@@ -339,6 +412,11 @@ class MixpanelAnalytics {
                   : _userId
           : props['distinct_id']
     };
+    
+    if (_platformInfo != null) {
+      properties.addAll(_platformInfo!);
+    }
+    
     if (ip != null) {
       properties = {...properties, 'ip': ip};
     }
