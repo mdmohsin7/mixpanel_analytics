@@ -77,6 +77,10 @@ class MixpanelAnalytics {
   /// This is false when start and true once the events are restored from storage.
   bool _isQueuedEventsReadFromStorage = false;
 
+  /// Prevents concurrent uploads of queued events, which can cause race conditions
+  /// when mutating the shared `_trackEvents` / `_engageEvents` lists.
+  bool _isUploadingQueuedEvents = false;
+
   static const int maxEventsInBatchRequest = 50;
 
   /// We can inject the client required, useful for testing
@@ -365,9 +369,18 @@ class MixpanelAnalytics {
   /// Tries to send all events pending to be send.
   /// TODO: if error when sending, send events in isolation identify the incorrect message
   Future<void> _uploadQueuedEvents() async {
-    await _uploadEvents(_trackEvents, _sendTrackBatch);
-    await _uploadEvents(_engageEvents, _sendEngageBatch);
-    await _saveQueuedEventsToLocalStorage();
+    if (_isUploadingQueuedEvents) {
+      return;
+    }
+
+    _isUploadingQueuedEvents = true;
+    try {
+      await _uploadEvents(_trackEvents, _sendTrackBatch);
+      await _uploadEvents(_engageEvents, _sendEngageBatch);
+      await _saveQueuedEventsToLocalStorage();
+    } finally {
+      _isUploadingQueuedEvents = false;
+    }
   }
 
   /// As the API for Mixpanel only allows 50 events per batch, we need to restrict the events sent on each request.
